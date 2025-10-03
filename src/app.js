@@ -1,7 +1,10 @@
-const express = require('express')
-const cors = require('cors')
+const express = require('express');
+const cors = require('cors');
 
-const app = express()
+const parcelRouter = require('./routes/parcel/parcel.router');
+const trackerRouter = require('./routes/tracker/tracker.router');
+
+const app = express();
 
 app.use(cors({
     origin: [
@@ -9,17 +12,20 @@ app.use(cors({
         'http://localhost:3000',
         'http://nivakaran.dev'
     ]
-}))
+}));
 
-app.use(express.json())
+app.use(express.json());
 
 app.get('/', (req, res) => {
-    res.json({message: "Sparrow: Parcel Service"})
-})
+    res.json({message: "Sparrow: Parcel Service"});
+});
 
 app.get('/health', (req, res) => {
-    res.json({message: "Parcel Service is running.."})
-})
+    res.json({message: "Parcel Service is running.."});
+});
 
+// Mount routers
+app.use('/api/parcels', parcelRouter);
+app.use('/api/tracker', trackerRouter);
 
-module.exports = app
+module.exports = app;
