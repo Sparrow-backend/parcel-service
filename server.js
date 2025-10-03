@@ -1,36 +1,43 @@
-const http = require('http')
-const app = require('./src/app')
-const mongoose = require('mongoose')
-const dotenv = require('dotenv')
+const http = require('http');
+const app = require('./src/app'); // your app.js
+const mongoose = require('mongoose');
+const dotenv = require('dotenv');
 
-dotenv.config()
+dotenv.config();
 
-const PORT = process.env.PORT || 8002
+const PORT = process.env.PORT || 8002;
+const MONGODB_URI = process.env.MONGODB_URI;
 
+// Create HTTP server
+const server = http.createServer(app);
+
+// MongoDB connection events
 mongoose.connection.once('open', () => {
-    console.log("MongoDB is ready!")
-})
+  console.log('MongoDB connection is ready!!');
+});
 
-mongoose.connection.on('error', () => {
-    console.error('Error in connecting with MongoDB')
-})
+mongoose.connection.on('error', (err) => {
+  console.error('Error connecting with MongoDB:', err);
+});
 
-const server = http.createServer(app)
+// Start server
+async function startServer() {
+  try {
+    // Connect to MongoDB
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('Connected to MongoDB');
 
-async function createServer() {
-    try {
-        
-        server.listen(PORT, () => {
-            console.log(`Server listening on port ${PORT}..`)
-        })
-
-        
-    } catch(err) {
-        console.error('Internal server error: ', err)
-        process.exit(1)
-    }
+    // Start listening
+    server.listen(PORT, () => {
+      console.log(`Server listening on port ${PORT}...`);
+    });
+  } catch (err) {
+    console.error('Failed to start server:', err);
+    process.exit(1); // exit process if DB connection fails
+  }
 }
 
-createServer()
-
-
+startServer();
