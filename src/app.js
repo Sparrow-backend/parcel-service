@@ -3,6 +3,7 @@ const cors = require('cors');
 
 const parcelRouter = require('./routes/parcel/parcel.router');
 const trackerRouter = require('./routes/tracker/tracker.router');
+const trackingRouter = require('./routes/tracking/tracking.router');
 
 const app = express();
 
@@ -27,5 +28,23 @@ app.get('/health', (req, res) => {
 // Mount routers
 app.use('/api/parcels', parcelRouter);
 app.use('/api/tracker', trackerRouter);
+app.use('/api/tracking', trackingRouter);
+
+// 404 Handler
+app.use((req, res) => {
+    res.status(404).json({
+        success: false,
+        message: 'Route not found'
+    });
+});
+
+// Error Handler
+app.use((err, req, res, next) => {
+    console.error('Error:', err);
+    res.status(err.status || 500).json({
+        success: false,
+        message: err.message || 'Internal server error'
+    });
+});
 
 module.exports = app;
