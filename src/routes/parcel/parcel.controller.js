@@ -5,9 +5,11 @@ const {
     getParcelByTrackingNumber,
     updateParcel,
     updateParcelStatus,
+    assignDriverToParcel,
     deleteParcel,
     getParcelsByStatus,
-    getParcelsByWarehouse
+    getParcelsByWarehouse,
+    getParcelsByDriver
 } = require('../../models/parcel/parcel.model');
 
 async function httpCreateParcel(req, res) {
@@ -37,6 +39,7 @@ async function httpGetAllParcels(req, res) {
         if (req.query.status) filters.status = req.query.status;
         if (req.query.warehouseId) filters.warehouseId = req.query.warehouseId;
         if (req.query.createdBy) filters.createdBy = req.query.createdBy;
+        if (req.query.assignedDriver) filters.assignedDriver = req.query.assignedDriver;
         
         const parcels = await getAllParcels(filters);
         
@@ -160,6 +163,34 @@ async function httpUpdateParcelStatus(req, res) {
     }
 }
 
+async function httpAssignDriver(req, res) {
+    try {
+        const { id } = req.params;
+        const { driverId } = req.body;
+        
+        if (!driverId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Driver ID is required'
+            });
+        }
+        
+        const parcel = await assignDriverToParcel(id, driverId);
+        
+        return res.status(200).json({
+            success: true,
+            message: 'Driver assigned successfully',
+            data: parcel
+        });
+    } catch (error) {
+        return res.status(400).json({
+            success: false,
+            message: 'Failed to assign driver',
+            error: error.message
+        });
+    }
+}
+
 async function httpDeleteParcel(req, res) {
     try {
         const { id } = req.params;
@@ -224,6 +255,25 @@ async function httpGetParcelsByWarehouse(req, res) {
     }
 }
 
+async function httpGetParcelsByDriver(req, res) {
+    try {
+        const { driverId } = req.params;
+        const parcels = await getParcelsByDriver(driverId);
+        
+        return res.status(200).json({
+            success: true,
+            count: parcels.length,
+            data: parcels
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch parcels by driver',
+            error: error.message
+        });
+    }
+}
+
 module.exports = {
     httpCreateParcel,
     httpGetAllParcels,
@@ -231,7 +281,9 @@ module.exports = {
     httpGetParcelByTrackingNumber,
     httpUpdateParcel,
     httpUpdateParcelStatus,
+    httpAssignDriver,
     httpDeleteParcel,
     httpGetParcelsByStatus,
-    httpGetParcelsByWarehouse
+    httpGetParcelsByWarehouse,
+    httpGetParcelsByDriver
 };

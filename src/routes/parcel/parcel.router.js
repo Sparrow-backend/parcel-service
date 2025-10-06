@@ -6,9 +6,11 @@ const {
     httpGetParcelByTrackingNumber,
     httpUpdateParcel,
     httpUpdateParcelStatus,
+    httpAssignDriver,
     httpDeleteParcel,
     httpGetParcelsByStatus,
-    httpGetParcelsByWarehouse
+    httpGetParcelsByWarehouse,
+    httpGetParcelsByDriver
 } = require('./parcel.controller');
 
 const parcelRouter = express.Router();
@@ -31,11 +33,17 @@ parcelRouter.get('/status/:status', httpGetParcelsByStatus);
 // Get parcels by warehouse
 parcelRouter.get('/warehouse/:warehouseId', httpGetParcelsByWarehouse);
 
+// Get parcels by driver
+parcelRouter.get('/driver/:driverId', httpGetParcelsByDriver);
+
 // Update parcel
 parcelRouter.put('/:id', httpUpdateParcel);
 
 // Update parcel status
 parcelRouter.patch('/:id/status', httpUpdateParcelStatus);
+
+// Assign driver to parcel
+parcelRouter.patch('/:id/assign-driver', httpAssignDriver);
 
 // Delete parcel
 parcelRouter.delete('/:id', httpDeleteParcel);
