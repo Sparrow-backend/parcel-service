@@ -1,4 +1,7 @@
 const mongoose = require('mongoose')
+require('../warehouse/warehouse.mongo')
+require('../consolidation/consolidation.mongo')
+require('../user/user.mongo')
 
 const ParcelSchema = new mongoose.Schema({
     trackingNumber: {
