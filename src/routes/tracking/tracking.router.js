@@ -4,13 +4,17 @@ const {
     httpAddTrackingEvent,
     httpUpdateTrackingLocation,
     httpGetActiveTrackings,
-    httpGetTrackingsByDriver
+    httpGetTrackingsByDriver,
+    httpGetActiveTrackingsWithLocation
 } = require('./tracking.controller');
 
 const trackingRouter = express.Router();
 
 // Get active trackings (in transit)
 trackingRouter.get('/active', httpGetActiveTrackings);
+
+// Get active trackings with detailed location info
+trackingRouter.get('/active-with-location', httpGetActiveTrackingsWithLocation);
 
 // Get tracking by number
 trackingRouter.get('/:trackingNumber', httpGetTrackingByNumber);
