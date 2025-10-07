@@ -4,6 +4,8 @@ const cors = require('cors');
 const parcelRouter = require('./routes/parcel/parcel.router');
 const trackerRouter = require('./routes/tracker/tracker.router');
 const trackingRouter = require('./routes/tracking/tracking.router');
+const invoiceRouter = require('./routes/invoice/invoice.router')
+const paymentRouter = require('./routes/payment/payment.router')
 
 const app = express();
 
@@ -29,6 +31,8 @@ app.get('/health', (req, res) => {
 app.use('/api/parcels', parcelRouter);
 app.use('/api/tracker', trackerRouter);
 app.use('/api/tracking', trackingRouter);
+app.use('/api/invoice', invoiceRouter)
+app.use('/api/payment', paymentRouter)
 
 // 404 Handler
 app.use((req, res) => {
