@@ -1,9 +1,23 @@
 const Parcel = require('./parcel.mongo');
+const mongoose = require('mongoose');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
+// Get Pricing model
+const Pricing = mongoose.model('Pricing');
 
 async function createParcel(parcelData) {
     try {
+        // Validate pricingId exists
+        if (parcelData.pricingId) {
+            const pricing = await Pricing.findById(parcelData.pricingId);
+            if (!pricing) {
+                throw new Error(`Invalid pricing ID: ${parcelData.pricingId}. Pricing not found.`);
+            }
+            if (!pricing.isActive) {
+                throw new Error(`Pricing ID ${parcelData.pricingId} is not active.`);
+            }
+        }
+        
         const parcel = new Parcel(parcelData);
         
         // Initialize status history with created status
@@ -39,6 +53,7 @@ async function createParcel(parcelData) {
 async function getAllParcels(filters = {}) {
     try {
         const parcels = await Parcel.find(filters)
+            .populate('pricingId')
             .populate('warehouseId')
             .populate('consolidationId')
             .populate('createdBy')
@@ -53,6 +68,7 @@ async function getAllParcels(filters = {}) {
 async function getParcelById(parcelId) {
     try {
         const parcel = await Parcel.findById(parcelId)
+            .populate('pricingId')
             .populate('warehouseId')
             .populate('consolidationId')
             .populate('createdBy')
@@ -66,6 +82,7 @@ async function getParcelById(parcelId) {
 async function getParcelByTrackingNumber(trackingNumber) {
     try {
         const parcel = await Parcel.findOne({ trackingNumber })
+            .populate('pricingId')
             .populate('warehouseId')
             .populate('consolidationId')
             .populate('createdBy')
@@ -78,11 +95,28 @@ async function getParcelByTrackingNumber(trackingNumber) {
 
 async function updateParcel(parcelId, updateData) {
     try {
+        // Validate pricingId if it's being updated
+        if (updateData.pricingId) {
+            const pricing = await Pricing.findById(updateData.pricingId);
+            if (!pricing) {
+                throw new Error(`Invalid pricing ID: ${updateData.pricingId}. Pricing not found.`);
+            }
+            if (!pricing.isActive) {
+                throw new Error(`Pricing ID ${updateData.pricingId} is not active.`);
+            }
+        }
+        
         const parcel = await Parcel.findByIdAndUpdate(
             parcelId,
             updateData,
             { new: true, runValidators: true }
-        );
+        )
+            .populate('pricingId')
+            .populate('warehouseId')
+            .populate('consolidationId')
+            .populate('createdBy')
+            .populate('assignedDriver', 'userName entityId');
+        
         return parcel;
     } catch (error) {
         throw error;
@@ -91,7 +125,9 @@ async function updateParcel(parcelId, updateData) {
 
 async function updateParcelStatus(parcelId, statusData) {
     try {
-        const parcel = await Parcel.findById(parcelId).populate('createdBy');
+        const parcel = await Parcel.findById(parcelId)
+            .populate('createdBy')
+            .populate('pricingId');
         
         if (!parcel) {
             throw new Error('Parcel not found');
@@ -134,7 +170,9 @@ async function updateParcelStatus(parcelId, statusData) {
 
 async function assignDriverToParcel(parcelId, driverId) {
     try {
-        const parcel = await Parcel.findById(parcelId).populate('createdBy');
+        const parcel = await Parcel.findById(parcelId)
+            .populate('createdBy')
+            .populate('pricingId');
         
         if (!parcel) {
             throw new Error('Parcel not found');
@@ -194,6 +232,7 @@ async function deleteParcel(parcelId) {
 async function getParcelsByStatus(status) {
     try {
         const parcels = await Parcel.find({ status })
+            .populate('pricingId')
             .populate('warehouseId')
             .populate('consolidationId')
             .populate('assignedDriver', 'userName entityId')
@@ -207,6 +246,7 @@ async function getParcelsByStatus(status) {
 async function getParcelsByWarehouse(warehouseId) {
     try {
         const parcels = await Parcel.find({ warehouseId })
+            .populate('pricingId')
             .populate('consolidationId')
             .populate('createdBy')
             .populate('assignedDriver', 'userName entityId')
@@ -220,9 +260,25 @@ async function getParcelsByWarehouse(warehouseId) {
 async function getParcelsByDriver(driverId) {
     try {
         const parcels = await Parcel.find({ assignedDriver: driverId })
+            .populate('pricingId')
             .populate('warehouseId')
             .populate('consolidationId')
             .populate('createdBy')
+            .sort({ createdTimeStamp: -1 });
+        return parcels;
+    } catch (error) {
+        throw error;
+    }
+}
+
+async function getParcelsByPricing(pricingId) {
+    try {
+        const parcels = await Parcel.find({ pricingId })
+            .populate('pricingId')
+            .populate('warehouseId')
+            .populate('consolidationId')
+            .populate('createdBy')
+            .populate('assignedDriver', 'userName entityId')
             .sort({ createdTimeStamp: -1 });
         return parcels;
     } catch (error) {
@@ -262,5 +318,6 @@ module.exports = {
     deleteParcel,
     getParcelsByStatus,
     getParcelsByWarehouse,
-    getParcelsByDriver
+    getParcelsByDriver,
+    getParcelsByPricing
 };

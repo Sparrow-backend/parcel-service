@@ -10,7 +10,8 @@ const {
     httpDeleteParcel,
     httpGetParcelsByStatus,
     httpGetParcelsByWarehouse,
-    httpGetParcelsByDriver
+    httpGetParcelsByDriver,
+    httpGetParcelsByPricing
 } = require('./parcel.controller');
 
 const parcelRouter = express.Router();
@@ -29,6 +30,9 @@ parcelRouter.get('/tracking/:trackingNumber', httpGetParcelByTrackingNumber);
 
 // Get parcels by status
 parcelRouter.get('/status/:status', httpGetParcelsByStatus);
+
+// Get parcels by pricing ID
+parcelRouter.get('/pricing/:pricingId', httpGetParcelsByPricing);
 
 // Get parcels by warehouse
 parcelRouter.get('/warehouse/:warehouseId', httpGetParcelsByWarehouse);

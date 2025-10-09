@@ -2,12 +2,18 @@ const mongoose = require('mongoose')
 require('../warehouse/warehouse.mongo')
 require('../consolidation/consolidation.mongo')
 require('../user/user.mongo')
+require('../pricing/pricing.mongo')
+
 
 const ParcelSchema = new mongoose.Schema({
     trackingNumber: {
         type: String,
         required: true, 
         unique: true
+    },
+    pricingId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Pricing"
     },
     weight: {
         value: Number,

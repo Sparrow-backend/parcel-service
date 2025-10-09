@@ -9,12 +9,22 @@ const {
     deleteParcel,
     getParcelsByStatus,
     getParcelsByWarehouse,
-    getParcelsByDriver
+    getParcelsByDriver,
+    getParcelsByPricing
 } = require('../../models/parcel/parcel.model');
 
 async function httpCreateParcel(req, res) {
     try {
         const parcelData = req.body;
+        
+        // Validate required field
+        if (!parcelData.pricingId) {
+            return res.status(400).json({
+                success: false,
+                message: 'pricingId is required'
+            });
+        }
+        
         const parcel = await createParcel(parcelData);
         
         return res.status(201).json({
@@ -37,6 +47,7 @@ async function httpGetAllParcels(req, res) {
         
         // Optional filtering by query params
         if (req.query.status) filters.status = req.query.status;
+        if (req.query.pricingId) filters.pricingId = req.query.pricingId;
         if (req.query.warehouseId) filters.warehouseId = req.query.warehouseId;
         if (req.query.createdBy) filters.createdBy = req.query.createdBy;
         if (req.query.assignedDriver) filters.assignedDriver = req.query.assignedDriver;
@@ -274,6 +285,25 @@ async function httpGetParcelsByDriver(req, res) {
     }
 }
 
+async function httpGetParcelsByPricing(req, res) {
+    try {
+        const { pricingId } = req.params;
+        const parcels = await getParcelsByPricing(pricingId);
+        
+        return res.status(200).json({
+            success: true,
+            count: parcels.length,
+            data: parcels
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch parcels by pricing',
+            error: error.message
+        });
+    }
+}
+
 module.exports = {
     httpCreateParcel,
     httpGetAllParcels,
@@ -285,5 +315,6 @@ module.exports = {
     httpDeleteParcel,
     httpGetParcelsByStatus,
     httpGetParcelsByWarehouse,
-    httpGetParcelsByDriver
+    httpGetParcelsByDriver,
+    httpGetParcelsByPricing
 };
