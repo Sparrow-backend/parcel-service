@@ -6,7 +6,9 @@ const {
     getDeliveriesByDriver,
     getDeliveriesByStatus,
     getDeliveriesByType,
+    getDeliveriesByItemType,
     getDeliveriesByWarehouse,
+    getDeliveriesByConsolidation,
     updateDelivery,
     updateDeliveryStatus,
     deleteDelivery,
@@ -28,6 +30,37 @@ async function httpCreateDelivery(req, res) {
             });
         }
 
+        if (!deliveryData.deliveryItemType) {
+            return res.status(400).json({
+                success: false,
+                message: 'deliveryItemType is required (must be "parcel" or "consolidation")'
+            });
+        }
+
+        if (!['parcel', 'consolidation'].includes(deliveryData.deliveryItemType)) {
+            return res.status(400).json({
+                success: false,
+                message: 'deliveryItemType must be either "parcel" or "consolidation"'
+            });
+        }
+
+        // Validate item-specific requirements
+        if (deliveryData.deliveryItemType === 'parcel') {
+            if (!deliveryData.parcels || deliveryData.parcels.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'At least one parcel is required for parcel delivery'
+                });
+            }
+        } else if (deliveryData.deliveryItemType === 'consolidation') {
+            if (!deliveryData.consolidation) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'consolidation ID is required for consolidation delivery'
+                });
+            }
+        }
+
         if (!deliveryData.fromLocation || !deliveryData.toLocation) {
             return res.status(400).json({
                 success: false,
@@ -39,13 +72,6 @@ async function httpCreateDelivery(req, res) {
             return res.status(400).json({
                 success: false,
                 message: 'fromLocation.type and toLocation.type are required (must be "warehouse" or "address")'
-            });
-        }
-
-        if (!deliveryData.parcels || deliveryData.parcels.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'At least one parcel is required'
             });
         }
 
@@ -77,6 +103,7 @@ async function httpGetAllDeliveries(req, res) {
         if (req.query.driverId) filters.assignedDriver = req.query.driverId;
         if (req.query.priority) filters.priority = req.query.priority;
         if (req.query.deliveryType) filters.deliveryType = req.query.deliveryType;
+        if (req.query.deliveryItemType) filters.deliveryItemType = req.query.deliveryItemType;
 
         const deliveries = await getAllDeliveries(filters);
 
@@ -217,6 +244,36 @@ async function httpGetDeliveriesByType(req, res) {
 }
 
 /**
+ * Get deliveries by item type (parcel or consolidation)
+ */
+async function httpGetDeliveriesByItemType(req, res) {
+    try {
+        const { itemType } = req.params;
+        
+        if (!['parcel', 'consolidation'].includes(itemType)) {
+            return res.status(400).json({
+                success: false,
+                message: 'itemType must be either "parcel" or "consolidation"'
+            });
+        }
+
+        const deliveries = await getDeliveriesByItemType(itemType);
+
+        return res.status(200).json({
+            success: true,
+            count: deliveries.length,
+            data: deliveries
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch deliveries by item type',
+            error: error.message
+        });
+    }
+}
+
+/**
  * Get deliveries by warehouse
  */
 async function httpGetDeliveriesByWarehouse(req, res) {
@@ -233,6 +290,28 @@ async function httpGetDeliveriesByWarehouse(req, res) {
         return res.status(500).json({
             success: false,
             message: 'Failed to fetch deliveries by warehouse',
+            error: error.message
+        });
+    }
+}
+
+/**
+ * Get deliveries by consolidation
+ */
+async function httpGetDeliveriesByConsolidation(req, res) {
+    try {
+        const { consolidationId } = req.params;
+        const deliveries = await getDeliveriesByConsolidation(consolidationId);
+
+        return res.status(200).json({
+            success: true,
+            count: deliveries.length,
+            data: deliveries
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch deliveries by consolidation',
             error: error.message
         });
     }
@@ -368,7 +447,9 @@ module.exports = {
     httpGetDeliveriesByDriver,
     httpGetDeliveriesByStatus,
     httpGetDeliveriesByType,
+    httpGetDeliveriesByItemType,
     httpGetDeliveriesByWarehouse,
+    httpGetDeliveriesByConsolidation,
     httpUpdateDelivery,
     httpUpdateDeliveryStatus,
     httpReassignDelivery,

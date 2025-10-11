@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 require('../user/user.mongo');
 require('../parcel/parcel.mongo');
+require('../consolidation/consolidation.mongo');
 require('../warehouse/warehouse.mongo');
 
 const DeliverySchema = new mongoose.Schema({
@@ -10,11 +11,19 @@ const DeliverySchema = new mongoose.Schema({
         unique: true,
         index: true
     },
+    deliveryItemType: {
+        type: String,
+        enum: ["parcel", "consolidation"],
+        required: true
+    },
     parcels: [{
         type: mongoose.Schema.Types.ObjectId,
-        ref: "Parcel",
-        required: true
+        ref: "Parcel"
     }],
+    consolidation: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Consolidation"
+    },
     assignedDriver: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
@@ -126,6 +135,7 @@ const DeliverySchema = new mongoose.Schema({
 DeliverySchema.index({ assignedDriver: 1, status: 1 });
 DeliverySchema.index({ status: 1, createdTimestamp: -1 });
 DeliverySchema.index({ deliveryType: 1 });
+DeliverySchema.index({ deliveryItemType: 1 });
 
 // Update timestamp on save
 DeliverySchema.pre('save', function(next) {

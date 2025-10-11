@@ -1,5 +1,6 @@
 const Delivery = require('./deliveries.mongo');
 const Parcel = require('../parcel/parcel.mongo');
+const Consolidation = require('../consolidation/consolidation.mongo');
 const User = require('../user/user.mongo');
 const Warehouse = require('../warehouse/warehouse.mongo');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
@@ -62,6 +63,42 @@ function determineDeliveryType(fromLocation, toLocation) {
  */
 async function createDelivery(deliveryData) {
     try {
+        // Validate deliveryItemType
+        if (!deliveryData.deliveryItemType) {
+            throw new Error('deliveryItemType is required (must be "parcel" or "consolidation")');
+        }
+
+        if (!['parcel', 'consolidation'].includes(deliveryData.deliveryItemType)) {
+            throw new Error('deliveryItemType must be either "parcel" or "consolidation"');
+        }
+
+        // Validate based on delivery item type
+        if (deliveryData.deliveryItemType === 'parcel') {
+            if (!deliveryData.parcels || deliveryData.parcels.length === 0) {
+                throw new Error('At least one parcel is required for parcel delivery');
+            }
+            
+            // Validate parcels exist
+            const parcels = await Parcel.find({ _id: { $in: deliveryData.parcels } });
+            if (parcels.length !== deliveryData.parcels.length) {
+                throw new Error('One or more parcels not found');
+            }
+        } else if (deliveryData.deliveryItemType === 'consolidation') {
+            if (!deliveryData.consolidation) {
+                throw new Error('Consolidation ID is required for consolidation delivery');
+            }
+            
+            // Validate consolidation exists
+            const consolidation = await Consolidation.findById(deliveryData.consolidation)
+                .populate('parcels');
+            if (!consolidation) {
+                throw new Error('Consolidation not found');
+            }
+            
+            // Store reference to consolidation's parcels for notifications
+            deliveryData._consolidationParcels = consolidation.parcels;
+        }
+
         // Validate driver exists and has driver role
         const driver = await User.findById(deliveryData.assignedDriver);
         if (!driver) {
@@ -78,14 +115,6 @@ async function createDelivery(deliveryData) {
         // Determine delivery type
         deliveryData.deliveryType = determineDeliveryType(deliveryData.fromLocation, deliveryData.toLocation);
 
-        // Validate parcels exist
-        if (deliveryData.parcels && deliveryData.parcels.length > 0) {
-            const parcels = await Parcel.find({ _id: { $in: deliveryData.parcels } });
-            if (parcels.length !== deliveryData.parcels.length) {
-                throw new Error('One or more parcels not found');
-            }
-        }
-
         // Generate delivery number if not provided
         if (!deliveryData.deliveryNumber) {
             deliveryData.deliveryNumber = generateDeliveryNumber();
@@ -94,16 +123,20 @@ async function createDelivery(deliveryData) {
         const delivery = new Delivery(deliveryData);
 
         // Initialize status history
+        const itemDescription = deliveryData.deliveryItemType === 'parcel' 
+            ? `${deliveryData.parcels.length} parcel(s)` 
+            : 'consolidation';
+        
         delivery.statusHistory.push({
             status: delivery.status,
             timestamp: new Date(),
-            note: `Delivery created: ${deliveryData.deliveryType.replace(/_/g, ' ')}`
+            note: `Delivery created: ${deliveryData.deliveryType.replace(/_/g, ' ')} - ${itemDescription}`
         });
 
         await delivery.save();
 
-        // Update parcels status and warehouse association
-        if (deliveryData.parcels && deliveryData.parcels.length > 0) {
+        // Update items based on delivery type
+        if (deliveryData.deliveryItemType === 'parcel') {
             const updateData = {
                 $set: { 
                     status: 'assigned_to_driver',
@@ -128,15 +161,62 @@ async function createDelivery(deliveryData) {
                 { _id: { $in: deliveryData.parcels } },
                 updateData
             );
+        } else if (deliveryData.deliveryItemType === 'consolidation') {
+            // Update consolidation status
+            await Consolidation.findByIdAndUpdate(
+                deliveryData.consolidation,
+                {
+                    $set: { status: 'in_transit' },
+                    $push: {
+                        statusHistory: {
+                            status: 'in_transit',
+                            timestamp: new Date(),
+                            note: `Assigned to delivery ${delivery.deliveryNumber}`
+                        }
+                    }
+                }
+            );
+
+            // Update all parcels in the consolidation
+            if (deliveryData._consolidationParcels) {
+                const parcelIds = deliveryData._consolidationParcels.map(p => p._id);
+                const updateData = {
+                    $set: { 
+                        status: 'in_transit',
+                        assignedDriver: deliveryData.assignedDriver
+                    },
+                    $push: {
+                        statusHistory: {
+                            status: 'in_transit',
+                            service: 'delivery-service',
+                            timestamp: new Date(),
+                            note: `Consolidation assigned to delivery ${delivery.deliveryNumber}`
+                        }
+                    }
+                };
+
+                if (toWarehouse) {
+                    updateData.$set.warehouseId = toWarehouse._id;
+                }
+
+                await Parcel.updateMany(
+                    { _id: { $in: parcelIds } },
+                    updateData
+                );
+            }
         }
 
         // Send notification to driver
         const deliveryTypeReadable = deliveryData.deliveryType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        const itemCount = deliveryData.deliveryItemType === 'parcel' 
+            ? `${deliveryData.parcels.length} parcel(s)` 
+            : '1 consolidation';
+        
         await sendNotification({
             userId: deliveryData.assignedDriver,
             type: 'delivery_assignment',
             title: 'New Delivery Assigned',
-            message: `You have been assigned ${deliveryTypeReadable} delivery ${delivery.deliveryNumber} with ${deliveryData.parcels?.length || 0} parcel(s)`,
+            message: `You have been assigned ${deliveryTypeReadable} delivery ${delivery.deliveryNumber} with ${itemCount}`,
             entityType: 'Delivery',
             entityId: delivery._id,
             channels: ['in_app', 'push']
@@ -169,6 +249,10 @@ async function getAllDeliveries(filters = {}) {
     try {
         const deliveries = await Delivery.find(filters)
             .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
             .populate('assignedDriver', 'userName entityId role')
             .populate('assignedBy', 'userName entityId role')
             .populate('fromLocation.warehouseId', 'name code address')
@@ -188,6 +272,10 @@ async function getDeliveryById(deliveryId) {
     try {
         const delivery = await Delivery.findById(deliveryId)
             .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
             .populate('assignedDriver', 'userName entityId role')
             .populate('assignedBy', 'userName entityId role')
             .populate('fromLocation.warehouseId', 'name code address')
@@ -206,6 +294,10 @@ async function getDeliveryByNumber(deliveryNumber) {
     try {
         const delivery = await Delivery.findOne({ deliveryNumber })
             .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
             .populate('assignedDriver', 'userName entityId role')
             .populate('assignedBy', 'userName entityId role')
             .populate('fromLocation.warehouseId', 'name code address')
@@ -224,6 +316,10 @@ async function getDeliveriesByDriver(driverId) {
     try {
         const deliveries = await Delivery.find({ assignedDriver: driverId })
             .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
             .populate('assignedBy', 'userName entityId role')
             .populate('fromLocation.warehouseId', 'name code address')
             .populate('toLocation.warehouseId', 'name code address')
@@ -242,6 +338,10 @@ async function getDeliveriesByStatus(status) {
     try {
         const deliveries = await Delivery.find({ status })
             .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
             .populate('assignedDriver', 'userName entityId role')
             .populate('assignedBy', 'userName entityId role')
             .populate('fromLocation.warehouseId', 'name code address')
@@ -261,6 +361,10 @@ async function getDeliveriesByType(deliveryType) {
     try {
         const deliveries = await Delivery.find({ deliveryType })
             .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
             .populate('assignedDriver', 'userName entityId role')
             .populate('assignedBy', 'userName entityId role')
             .populate('fromLocation.warehouseId', 'name code address')
@@ -269,6 +373,29 @@ async function getDeliveriesByType(deliveryType) {
         return deliveries;
     } catch (error) {
         console.error('Error fetching deliveries by type:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get deliveries by item type (parcel or consolidation)
+ */
+async function getDeliveriesByItemType(itemType) {
+    try {
+        const deliveries = await Delivery.find({ deliveryItemType: itemType })
+            .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
+            .populate('assignedDriver', 'userName entityId role')
+            .populate('assignedBy', 'userName entityId role')
+            .populate('fromLocation.warehouseId', 'name code address')
+            .populate('toLocation.warehouseId', 'name code address')
+            .sort({ createdTimestamp: -1 });
+        return deliveries;
+    } catch (error) {
+        console.error('Error fetching deliveries by item type:', error);
         throw error;
     }
 }
@@ -285,6 +412,10 @@ async function getDeliveriesByWarehouse(warehouseId) {
             ]
         })
             .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
             .populate('assignedDriver', 'userName entityId role')
             .populate('assignedBy', 'userName entityId role')
             .populate('fromLocation.warehouseId', 'name code address')
@@ -293,6 +424,29 @@ async function getDeliveriesByWarehouse(warehouseId) {
         return deliveries;
     } catch (error) {
         console.error('Error fetching deliveries by warehouse:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get deliveries by consolidation
+ */
+async function getDeliveriesByConsolidation(consolidationId) {
+    try {
+        const deliveries = await Delivery.find({ consolidation: consolidationId })
+            .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
+            .populate('assignedDriver', 'userName entityId role')
+            .populate('assignedBy', 'userName entityId role')
+            .populate('fromLocation.warehouseId', 'name code address')
+            .populate('toLocation.warehouseId', 'name code address')
+            .sort({ createdTimestamp: -1 });
+        return deliveries;
+    } catch (error) {
+        console.error('Error fetching deliveries by consolidation:', error);
         throw error;
     }
 }
@@ -327,6 +481,10 @@ async function updateDelivery(deliveryId, updateData) {
             { new: true, runValidators: true }
         )
             .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
             .populate('assignedDriver', 'userName entityId role')
             .populate('assignedBy', 'userName entityId role')
             .populate('fromLocation.warehouseId', 'name code address')
@@ -347,6 +505,10 @@ async function updateDeliveryStatus(deliveryId, statusData) {
         const delivery = await Delivery.findById(deliveryId)
             .populate('assignedDriver')
             .populate('parcels')
+            .populate({
+                path: 'consolidation',
+                populate: { path: 'parcels' }
+            })
             .populate('toLocation.warehouseId');
 
         if (!delivery) {
@@ -374,26 +536,32 @@ async function updateDeliveryStatus(deliveryId, statusData) {
 
         await delivery.save();
 
-        // Update parcel statuses based on delivery status
+        // Update items based on delivery status and type
         let parcelStatus = null;
+        let consolidationStatus = null;
+
         switch (statusData.status) {
             case 'picked_up':
                 parcelStatus = 'in_transit';
+                consolidationStatus = 'in_transit';
                 break;
             case 'in_transit':
                 parcelStatus = 'in_transit';
+                consolidationStatus = 'in_transit';
                 break;
             case 'delivered':
-                // If delivered to warehouse, update parcel status to at_warehouse
                 if (delivery.toLocation.type === 'warehouse') {
                     parcelStatus = 'at_warehouse';
+                    consolidationStatus = 'delivered';
                 } else {
                     parcelStatus = 'delivered';
+                    consolidationStatus = 'delivered';
                 }
                 break;
         }
 
-        if (parcelStatus && delivery.parcels.length > 0) {
+        // Update based on delivery item type
+        if (delivery.deliveryItemType === 'parcel' && parcelStatus && delivery.parcels.length > 0) {
             await Parcel.updateMany(
                 { _id: { $in: delivery.parcels.map(p => p._id) } },
                 {
@@ -408,6 +576,41 @@ async function updateDeliveryStatus(deliveryId, statusData) {
                     }
                 }
             );
+        } else if (delivery.deliveryItemType === 'consolidation' && delivery.consolidation) {
+            // Update consolidation
+            if (consolidationStatus) {
+                await Consolidation.findByIdAndUpdate(
+                    delivery.consolidation._id,
+                    {
+                        $set: { status: consolidationStatus },
+                        $push: {
+                            statusHistory: {
+                                status: consolidationStatus,
+                                timestamp: new Date(),
+                                note: `Delivery ${delivery.deliveryNumber} status: ${statusData.status}`
+                            }
+                        }
+                    }
+                );
+            }
+
+            // Update all parcels in consolidation
+            if (parcelStatus && delivery.consolidation.parcels && delivery.consolidation.parcels.length > 0) {
+                await Parcel.updateMany(
+                    { _id: { $in: delivery.consolidation.parcels.map(p => p._id) } },
+                    {
+                        $set: { status: parcelStatus },
+                        $push: {
+                            statusHistory: {
+                                status: parcelStatus,
+                                service: 'delivery-service',
+                                timestamp: new Date(),
+                                note: `Consolidation delivery ${delivery.deliveryNumber} status: ${statusData.status}`
+                            }
+                        }
+                    }
+                );
+            }
         }
 
         // Send notifications
@@ -536,7 +739,9 @@ module.exports = {
     getDeliveriesByDriver,
     getDeliveriesByStatus,
     getDeliveriesByType,
+    getDeliveriesByItemType,
     getDeliveriesByWarehouse,
+    getDeliveriesByConsolidation,
     updateDelivery,
     updateDeliveryStatus,
     deleteDelivery,
