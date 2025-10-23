@@ -3,6 +3,8 @@ const Parcel = require('../parcel/parcel.mongo');
 const Consolidation = require('../consolidation/consolidation.mongo');
 const User = require('../user/user.mongo');
 const Warehouse = require('../warehouse/warehouse.mongo');
+const Earnings = require('../earnings/earnings.mongo');
+const CommissionSettings = require('../commissionSettings/commissionSettings.mongo');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 /**
@@ -55,6 +57,118 @@ function determineDeliveryType(fromLocation, toLocation) {
         return 'warehouse_to_address';
     } else {
         throw new Error('Invalid delivery route. Deliveries must be: address→warehouse, warehouse→warehouse, or warehouse→address');
+    }
+}
+
+/**
+ * Calculate delivery base amount for earnings
+ */
+function calculateDeliveryBaseAmount(delivery, items) {
+    let baseAmount = 0;
+    
+    // Base calculation: sum of item weights
+    items.forEach(item => {
+        const weight = item.weight?.value || 0;
+        baseAmount += weight * 10; // Rs. 10 per kg
+    });
+    
+    // Add distance-based amount if available
+    if (delivery.distance && delivery.distance > 0) {
+        baseAmount += delivery.distance * 5; // Rs. 5 per km
+    } else {
+        // Estimate based on delivery type
+        if (delivery.deliveryType === 'warehouse_to_warehouse') {
+            baseAmount += 50; // Base amount for warehouse transfers
+        } else if (delivery.deliveryType === 'warehouse_to_address') {
+            baseAmount += 100; // Base amount for last-mile delivery
+        } else if (delivery.deliveryType === 'address_to_warehouse') {
+            baseAmount += 75; // Base amount for pickup
+        }
+    }
+    
+    // Priority multipliers
+    if (delivery.priority === 'urgent') {
+        baseAmount *= 1.5;
+    } else if (delivery.priority === 'high') {
+        baseAmount *= 1.2;
+    }
+    
+    return Math.round(baseAmount * 100) / 100;
+}
+
+/**
+ * Create earnings record when delivery is completed
+ */
+async function createEarningsForDelivery(delivery) {
+    try {
+        // Check if earnings already exist
+        const existingEarnings = await Earnings.findOne({ delivery: delivery._id });
+        if (existingEarnings) {
+            console.log('✅ Earnings already exist for delivery:', delivery.deliveryNumber);
+            return existingEarnings;
+        }
+        
+        // Get items
+        const items = delivery.deliveryItemType === "consolidation"
+            ? delivery.consolidation?.parcels || []
+            : delivery.parcels || [];
+        
+        if (items.length === 0) {
+            console.log('⚠️ No items found for earnings calculation');
+            return null;
+        }
+        
+        // Calculate base amount
+        const baseAmount = calculateDeliveryBaseAmount(delivery, items);
+        
+        // Get commission settings
+        let commissionSettings = await CommissionSettings.findOne({ 
+            deliveryType: delivery.deliveryType,
+            isActive: true 
+        });
+        
+        if (!commissionSettings) {
+            // Use default settings
+            commissionSettings = await CommissionSettings.findOne({ 
+                deliveryType: 'default',
+                isActive: true 
+            });
+        }
+        
+        const commissionRate = commissionSettings?.commissionRate || 10;
+        
+        // Create earnings record
+        const earningsData = {
+            driver: delivery.assignedDriver._id || delivery.assignedDriver,
+            delivery: delivery._id,
+            baseAmount: baseAmount,
+            commissionRate: commissionRate,
+            bonusAmount: 0,
+            deductions: 0,
+            status: 'approved', // Auto-approve
+            deliveryCompletedAt: delivery.actualDeliveryTime || new Date()
+        };
+        
+        const earnings = new Earnings(earningsData);
+        await earnings.save();
+        
+        console.log(`✅ Earnings created for delivery ${delivery.deliveryNumber}: Rs. ${earnings.totalEarnings} (Base: Rs. ${baseAmount}, Commission: ${commissionRate}%)`);
+        
+        // Send notification to driver about earnings
+        await sendNotification({
+            userId: earnings.driver,
+            type: 'earnings_created',
+            title: 'Earnings Added',
+            message: `You earned Rs. ${earnings.totalEarnings.toFixed(2)} from delivery ${delivery.deliveryNumber}`,
+            entityType: 'Earnings',
+            entityId: earnings._id,
+            channels: ['in_app']
+        });
+        
+        return earnings;
+    } catch (error) {
+        console.error('❌ Error creating earnings for delivery:', error);
+        return null;
     }
 }
 
@@ -557,6 +671,11 @@ async function updateDeliveryStatus(deliveryId, statusData) {
                     parcelStatus = 'delivered';
                     consolidationStatus = 'delivered';
                 }
+                
+                // ✅ CREATE EARNINGS WHEN DELIVERED
+                console.log('🎯 Delivery completed, creating earnings...');
+                await createEarningsForDelivery(delivery);
+                
                 break;
         }
 
@@ -745,5 +864,6 @@ module.exports = {
     updateDelivery,
     updateDeliveryStatus,
     deleteDelivery,
-    reassignDelivery
+    reassignDelivery,
+    createEarningsForDelivery // Export for manual creation if needed
 };

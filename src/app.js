@@ -7,6 +7,8 @@ const trackingRouter = require('./routes/tracking/tracking.router');
 const invoiceRouter = require('./routes/invoice/invoice.router');
 const paymentRouter = require('./routes/payment/payment.router');
 const deliveryRouter = require('./routes/deliveries/deliveries.router');
+const earningsRouter = require('./routes/earnings/earnings.router');
+const commissionRouter = require('./routes/commissionSettings/commissionSettings.router');
 
 const app = express();
 
@@ -35,6 +37,8 @@ app.use('/api/tracking', trackingRouter);
 app.use('/api/invoice', invoiceRouter);
 app.use('/api/payment', paymentRouter);
 app.use('/api/deliveries', deliveryRouter);
+app.use('/api/earnings', earningsRouter);
+app.use('/api/commission-settings', commissionRouter);
 
 // 404 Handler
 app.use((req, res) => {
