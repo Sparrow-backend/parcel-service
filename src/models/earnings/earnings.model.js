@@ -23,6 +23,7 @@ async function getCommissionSettings(deliveryType) {
         
         return settings;
     } catch (error) {
+        console.error('Error getting commission settings:', error);
         throw error;
     }
 }
@@ -32,10 +33,15 @@ async function getCommissionSettings(deliveryType) {
  */
 async function createEarnings(earningsData) {
     try {
+        console.log('📝 Creating earnings record...');
+        
         // Validate driver exists
         const driver = await User.findById(earningsData.driver);
-        if (!driver || driver.role !== 'Driver') {
-            throw new Error('Invalid driver');
+        if (!driver) {
+            throw new Error('Driver not found');
+        }
+        if (driver.role !== 'Driver') {
+            throw new Error('User is not a driver');
         }
         
         // Validate delivery exists
@@ -46,12 +52,20 @@ async function createEarnings(earningsData) {
         }
         
         // Verify driver is assigned to this delivery
-        if (delivery.assignedDriver._id.toString() !== earningsData.driver.toString()) {
+        const deliveryDriverId = delivery.assignedDriver._id || delivery.assignedDriver;
+        if (deliveryDriverId.toString() !== earningsData.driver.toString()) {
             throw new Error('Driver not assigned to this delivery');
         }
         
+        // Check if earnings already exist for this delivery
+        const existingEarnings = await Earnings.findOne({ delivery: earningsData.delivery });
+        if (existingEarnings) {
+            console.log('⚠️ Earnings already exist for this delivery');
+            return existingEarnings;
+        }
+        
         // Get commission settings if not provided
-        if (!earningsData.commissionRate) {
+        if (!earningsData.commissionRate && earningsData.commissionRate !== 0) {
             const settings = await getCommissionSettings(delivery.deliveryType);
             earningsData.commissionRate = settings?.commissionRate || 10;
             if (!earningsData.baseAmount && settings?.baseAmount) {
@@ -59,11 +73,30 @@ async function createEarnings(earningsData) {
             }
         }
         
+        // Ensure required fields have defaults
+        if (!earningsData.bonusAmount) {
+            earningsData.bonusAmount = 0;
+        }
+        if (!earningsData.deductions) {
+            earningsData.deductions = 0;
+        }
+        if (!earningsData.status) {
+            earningsData.status = 'pending';
+        }
+        if (!earningsData.deliveryCompletedAt) {
+            earningsData.deliveryCompletedAt = new Date();
+        }
+        
         const earnings = new Earnings(earningsData);
         await earnings.save();
         
+        console.log('✅ Earnings record created successfully');
+        console.log(`   Driver: ${driver.userName}`);
+        console.log(`   Total Earnings: Rs. ${earnings.totalEarnings}`);
+        
         return earnings;
     } catch (error) {
+        console.error('Error creating earnings:', error);
         throw error;
     }
 }
@@ -85,6 +118,7 @@ async function getAllEarnings(filters = {}) {
             .sort({ deliveryCompletedAt: -1 });
         return earnings;
     } catch (error) {
+        console.error('Error fetching earnings:', error);
         throw error;
     }
 }
@@ -106,6 +140,7 @@ async function getEarningsByDriver(driverId, filters = {}) {
             .sort({ deliveryCompletedAt: -1 });
         return earnings;
     } catch (error) {
+        console.error('Error fetching driver earnings:', error);
         throw error;
     }
 }
@@ -163,6 +198,7 @@ async function getDriverEarningsSummary(driverId, startDate, endDate) {
         
         return summary;
     } catch (error) {
+        console.error('Error getting driver earnings summary:', error);
         throw error;
     }
 }
@@ -180,8 +216,15 @@ async function updateEarnings(earningsId, updateData) {
             .populate('driver', 'userName entityId')
             .populate('delivery');
         
+        if (!earnings) {
+            throw new Error('Earnings record not found');
+        }
+        
+        console.log('✅ Earnings updated successfully');
+        
         return earnings;
     } catch (error) {
+        console.error('Error updating earnings:', error);
         throw error;
     }
 }
@@ -209,8 +252,15 @@ async function updateEarningsStatus(earningsId, status, notes) {
             .populate('driver', 'userName entityId')
             .populate('delivery');
         
+        if (!earnings) {
+            throw new Error('Earnings record not found');
+        }
+        
+        console.log(`✅ Earnings status updated to: ${status}`);
+        
         return earnings;
     } catch (error) {
+        console.error('Error updating earnings status:', error);
         throw error;
     }
 }
@@ -221,8 +271,16 @@ async function updateEarningsStatus(earningsId, status, notes) {
 async function deleteEarnings(earningsId) {
     try {
         const earnings = await Earnings.findByIdAndDelete(earningsId);
+        
+        if (!earnings) {
+            throw new Error('Earnings record not found');
+        }
+        
+        console.log('✅ Earnings deleted successfully');
+        
         return earnings;
     } catch (error) {
+        console.error('Error deleting earnings:', error);
         throw error;
     }
 }

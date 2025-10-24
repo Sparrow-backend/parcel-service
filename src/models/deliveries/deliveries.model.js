@@ -101,6 +101,17 @@ function calculateDeliveryBaseAmount(delivery, items) {
  */
 async function createEarningsForDelivery(delivery) {
     try {
+        console.log('🎯 Starting earnings creation for delivery:', delivery.deliveryNumber);
+        
+        // Ensure delivery is fully populated
+        if (!delivery.assignedDriver) {
+            console.error('❌ No driver assigned to delivery');
+            return null;
+        }
+
+        // Get driver ID (handle both ObjectId and populated object)
+        const driverId = delivery.assignedDriver._id || delivery.assignedDriver;
+        
         // Check if earnings already exist
         const existingEarnings = await Earnings.findOne({ delivery: delivery._id });
         if (existingEarnings) {
@@ -108,10 +119,21 @@ async function createEarningsForDelivery(delivery) {
             return existingEarnings;
         }
         
-        // Get items
-        const items = delivery.deliveryItemType === "consolidation"
-            ? delivery.consolidation?.parcels || []
-            : delivery.parcels || [];
+        // Get items based on delivery type
+        let items = [];
+        if (delivery.deliveryItemType === "consolidation") {
+            if (delivery.consolidation?.parcels) {
+                items = delivery.consolidation.parcels;
+            } else if (delivery.consolidation) {
+                // If consolidation is not populated, fetch it
+                const consolidation = await Consolidation.findById(delivery.consolidation).populate('parcels');
+                if (consolidation) {
+                    items = consolidation.parcels;
+                }
+            }
+        } else {
+            items = delivery.parcels || [];
+        }
         
         if (items.length === 0) {
             console.log('⚠️ No items found for earnings calculation');
@@ -120,26 +142,30 @@ async function createEarningsForDelivery(delivery) {
         
         // Calculate base amount
         const baseAmount = calculateDeliveryBaseAmount(delivery, items);
+        console.log('💰 Calculated base amount:', baseAmount);
         
-        // Get commission settings
+        // Get commission settings for this delivery type
         let commissionSettings = await CommissionSettings.findOne({ 
             deliveryType: delivery.deliveryType,
             isActive: true 
         });
         
+        // Fallback to default if not found
         if (!commissionSettings) {
-            // Use default settings
+            console.log('⚠️ No specific commission settings found, using default');
             commissionSettings = await CommissionSettings.findOne({ 
                 deliveryType: 'default',
                 isActive: true 
             });
         }
         
+        // Use default commission rate if still not found
         const commissionRate = commissionSettings?.commissionRate || 10;
+        console.log('📊 Commission rate:', commissionRate + '%');
         
         // Create earnings record
         const earningsData = {
-            driver: delivery.assignedDriver._id || delivery.assignedDriver,
+            driver: driverId,
             delivery: delivery._id,
             baseAmount: baseAmount,
             commissionRate: commissionRate,
@@ -152,23 +178,33 @@ async function createEarningsForDelivery(delivery) {
         const earnings = new Earnings(earningsData);
         await earnings.save();
         
-        console.log(`✅ Earnings created for delivery ${delivery.deliveryNumber}: Rs. ${earnings.totalEarnings} (Base: Rs. ${baseAmount}, Commission: ${commissionRate}%)`);
+        console.log(`✅ Earnings created successfully!`);
+        console.log(`   Delivery: ${delivery.deliveryNumber}`);
+        console.log(`   Base: Rs. ${baseAmount}`);
+        console.log(`   Commission: ${commissionRate}%`);
+        console.log(`   Total: Rs. ${earnings.totalEarnings}`);
         
         // Send notification to driver about earnings
-        await sendNotification({
-            userId: earnings.driver,
-            type: 'earnings_created',
-            title: 'Earnings Added',
-            message: `You earned Rs. ${earnings.totalEarnings.toFixed(2)} from delivery ${delivery.deliveryNumber}`,
-            entityType: 'Earnings',
-            entityId: earnings._id,
-            channels: ['in_app']
-        });
+        try {
+            await sendNotification({
+                userId: driverId,
+                type: 'earnings_created',
+                title: 'Earnings Added',
+                message: `You earned Rs. ${earnings.totalEarnings.toFixed(2)} from delivery ${delivery.deliveryNumber}`,
+                entityType: 'Earnings',
+                entityId: earnings._id,
+                channels: ['in_app', 'push']
+            });
+            console.log('✅ Notification sent to driver');
+        } catch (notifError) {
+            console.error('⚠️ Failed to send notification (non-critical):', notifError.message);
+        }
         
         return earnings;
     } catch (error) {
         console.error('❌ Error creating earnings for delivery:', error);
-        return null;
+        console.error('Stack trace:', error.stack);
+        throw error; // Re-throw to be handled by caller
     }
 }
 
@@ -674,7 +710,12 @@ async function updateDeliveryStatus(deliveryId, statusData) {
                 
                 // ✅ CREATE EARNINGS WHEN DELIVERED
                 console.log('🎯 Delivery completed, creating earnings...');
-                await createEarningsForDelivery(delivery);
+                try {
+                    await createEarningsForDelivery(delivery);
+                } catch (earningsError) {
+                    console.error('❌ Failed to create earnings (non-critical):', earningsError);
+                    // Don't fail the status update if earnings creation fails
+                }
                 
                 break;
         }
