@@ -61,30 +61,81 @@ function determineDeliveryType(fromLocation, toLocation) {
 }
 
 /**
+ * Calculate distance between two coordinates in km
+ */
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371; // Earth's radius in km
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+function toRad(deg) {
+    return deg * (Math.PI / 180);
+}
+
+/**
  * Calculate delivery base amount for earnings
  */
-function calculateDeliveryBaseAmount(delivery, items) {
+function calculateDeliveryBaseAmount(delivery, items, commissionSettings) {
     let baseAmount = 0;
     
-    // Base calculation: sum of item weights
-    items.forEach(item => {
-        const weight = item.weight?.value || 0;
-        baseAmount += weight * 10; // Rs. 10 per kg
-    });
-    
-    // Add distance-based amount if available
-    if (delivery.distance && delivery.distance > 0) {
-        baseAmount += delivery.distance * 5; // Rs. 5 per km
+    // Start with base amount from commission settings if available
+    if (commissionSettings && commissionSettings.baseAmount) {
+        baseAmount = commissionSettings.baseAmount;
     } else {
-        // Estimate based on delivery type
+        // Default base amounts by delivery type
         if (delivery.deliveryType === 'warehouse_to_warehouse') {
-            baseAmount += 50; // Base amount for warehouse transfers
+            baseAmount = 50;
         } else if (delivery.deliveryType === 'warehouse_to_address') {
-            baseAmount += 100; // Base amount for last-mile delivery
+            baseAmount = 100;
         } else if (delivery.deliveryType === 'address_to_warehouse') {
-            baseAmount += 75; // Base amount for pickup
+            baseAmount = 75;
         }
     }
+    
+    // Add weight-based calculation
+    let totalWeight = 0;
+    items.forEach(item => {
+        const weight = item.weight?.value || 0;
+        totalWeight += weight;
+    });
+    baseAmount += totalWeight * 10; // Rs. 10 per kg
+    
+    // Calculate distance if location history exists
+    let distance = 0;
+    if (delivery.statusHistory && delivery.statusHistory.length > 1) {
+        for (let i = 1; i < delivery.statusHistory.length; i++) {
+            const loc1 = delivery.statusHistory[i - 1].location;
+            const loc2 = delivery.statusHistory[i].location;
+            if (loc1?.latitude && loc1?.longitude && loc2?.latitude && loc2?.longitude) {
+                distance += calculateDistance(
+                    loc1.latitude,
+                    loc1.longitude,
+                    loc2.latitude,
+                    loc2.longitude
+                );
+            }
+        }
+    }
+    
+    // Estimate distance if not available
+    if (distance === 0) {
+        if (delivery.deliveryType === 'warehouse_to_warehouse') {
+            distance = 10; // Estimate 10km for warehouse transfers
+        } else if (delivery.deliveryType === 'warehouse_to_address') {
+            distance = 15; // Estimate 15km for last-mile delivery
+        } else if (delivery.deliveryType === 'address_to_warehouse') {
+            distance = 12; // Estimate 12km for pickup
+        }
+    }
+    
+    // Add distance-based amount
+    baseAmount += distance * 5; // Rs. 5 per km
     
     // Priority multipliers
     if (delivery.priority === 'urgent') {
@@ -140,10 +191,6 @@ async function createEarningsForDelivery(delivery) {
             return null;
         }
         
-        // Calculate base amount
-        const baseAmount = calculateDeliveryBaseAmount(delivery, items);
-        console.log('💰 Calculated base amount:', baseAmount);
-        
         // Get commission settings for this delivery type
         let commissionSettings = await CommissionSettings.findOne({ 
             deliveryType: delivery.deliveryType,
@@ -163,13 +210,23 @@ async function createEarningsForDelivery(delivery) {
         const commissionRate = commissionSettings?.commissionRate || 10;
         console.log('📊 Commission rate:', commissionRate + '%');
         
+        // Calculate base amount
+        const baseAmount = calculateDeliveryBaseAmount(delivery, items, commissionSettings);
+        console.log('💰 Calculated base amount:', baseAmount);
+        
+        // Calculate bonus for urgent deliveries
+        let bonusAmount = 0;
+        if (delivery.priority === 'urgent' && commissionSettings?.urgentDeliveryBonus) {
+            bonusAmount = commissionSettings.urgentDeliveryBonus;
+        }
+        
         // Create earnings record
         const earningsData = {
             driver: driverId,
             delivery: delivery._id,
             baseAmount: baseAmount,
             commissionRate: commissionRate,
-            bonusAmount: 0,
+            bonusAmount: bonusAmount,
             deductions: 0,
             status: 'approved', // Auto-approve
             deliveryCompletedAt: delivery.actualDeliveryTime || new Date()
@@ -182,6 +239,7 @@ async function createEarningsForDelivery(delivery) {
         console.log(`   Delivery: ${delivery.deliveryNumber}`);
         console.log(`   Base: Rs. ${baseAmount}`);
         console.log(`   Commission: ${commissionRate}%`);
+        console.log(`   Bonus: Rs. ${bonusAmount}`);
         console.log(`   Total: Rs. ${earnings.totalEarnings}`);
         
         // Send notification to driver about earnings
@@ -204,7 +262,8 @@ async function createEarningsForDelivery(delivery) {
     } catch (error) {
         console.error('❌ Error creating earnings for delivery:', error);
         console.error('Stack trace:', error.stack);
-        throw error; // Re-throw to be handled by caller
+        // Don't throw - log and continue
+        return null;
     }
 }
 
@@ -711,7 +770,12 @@ async function updateDeliveryStatus(deliveryId, statusData) {
                 // ✅ CREATE EARNINGS WHEN DELIVERED
                 console.log('🎯 Delivery completed, creating earnings...');
                 try {
-                    await createEarningsForDelivery(delivery);
+                    const earnings = await createEarningsForDelivery(delivery);
+                    if (earnings) {
+                        console.log('✅ Earnings created successfully');
+                    } else {
+                        console.warn('⚠️ Earnings not created (may already exist or error occurred)');
+                    }
                 } catch (earningsError) {
                     console.error('❌ Failed to create earnings (non-critical):', earningsError);
                     // Don't fail the status update if earnings creation fails

@@ -41,6 +41,7 @@ async function httpCreateEarnings(req, res) {
             data: earnings
         });
     } catch (error) {
+        console.error('Create earnings error:', error);
         return res.status(400).json({
             success: false,
             message: 'Failed to create earnings record',
@@ -67,6 +68,7 @@ async function httpGetAllEarnings(req, res) {
             data: earnings
         });
     } catch (error) {
+        console.error('Get all earnings error:', error);
         return res.status(500).json({
             success: false,
             message: 'Failed to fetch earnings',
@@ -81,6 +83,9 @@ async function httpGetAllEarnings(req, res) {
 async function httpGetEarningsByDriver(req, res) {
     try {
         const { driverId } = req.params;
+        
+        console.log('📡 Fetching earnings for driver:', driverId);
+        
         const filters = {};
         
         if (req.query.status) filters.status = req.query.status;
@@ -96,12 +101,15 @@ async function httpGetEarningsByDriver(req, res) {
         
         const earnings = await getEarningsByDriver(driverId, filters);
         
+        console.log(`✅ Found ${earnings.length} earnings records for driver`);
+        
         return res.status(200).json({
             success: true,
             count: earnings.length,
             data: earnings
         });
     } catch (error) {
+        console.error('Get earnings by driver error:', error);
         return res.status(500).json({
             success: false,
             message: 'Failed to fetch driver earnings',
@@ -118,13 +126,18 @@ async function httpGetDriverEarningsSummary(req, res) {
         const { driverId } = req.params;
         const { startDate, endDate } = req.query;
         
+        console.log('📡 Fetching earnings summary for driver:', driverId);
+        
         const summary = await getDriverEarningsSummary(driverId, startDate, endDate);
+        
+        console.log('✅ Summary calculated successfully');
         
         return res.status(200).json({
             success: true,
             data: summary
         });
     } catch (error) {
+        console.error('Get earnings summary error:', error);
         return res.status(500).json({
             success: false,
             message: 'Failed to fetch earnings summary',
@@ -156,6 +169,7 @@ async function httpUpdateEarnings(req, res) {
             data: earnings
         });
     } catch (error) {
+        console.error('Update earnings error:', error);
         return res.status(400).json({
             success: false,
             message: 'Failed to update earnings',
@@ -194,6 +208,7 @@ async function httpUpdateEarningsStatus(req, res) {
             data: earnings
         });
     } catch (error) {
+        console.error('Update earnings status error:', error);
         return res.status(400).json({
             success: false,
             message: 'Failed to update earnings status',
@@ -223,6 +238,7 @@ async function httpDeleteEarnings(req, res) {
             data: earnings
         });
     } catch (error) {
+        console.error('Delete earnings error:', error);
         return res.status(500).json({
             success: false,
             message: 'Failed to delete earnings',
